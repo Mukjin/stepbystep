@@ -1,65 +1,74 @@
 package io.goorm.stepbystep.config;
 
+// Spring Security 및 JWT 필터 관련 임포트
+import io.goorm.stepbystep.security.JwtAuthenticationFilter;
+import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
-import org.springframework.security.core.userdetails.User;
-import org.springframework.security.core.userdetails.UserDetails;
-import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.security.provisioning.InMemoryUserDetailsManager;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
 @Configuration
 @EnableWebSecurity
+@RequiredArgsConstructor
 public class SecurityConfig {
+    // JWT 인증 필터 주입
+    private final JwtAuthenticationFilter jwtAuthFilter;
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
+                // CSRF 보호 비활성화 (JWT를 사용하므로 불필요)
+                .csrf(csrf -> csrf.disable())
+
+                // URL별 접근 권한 설정
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/").permitAll()  // 이 경로들은 모든 사용자에게 허용
-                        .requestMatchers("/admin").hasRole("ADMIN")  // ADMIN 역할만 접근 가능
-                        .requestMatchers("/home").authenticated()    // 인증된 사용자 접근 가능
-                        .anyRequest().authenticated()              // 그 외 모든 요청은 인증 필요
+                        // 인증 없이 접근 가능한 경로 설정
+                        .requestMatchers("/api/","/api/auth/**", "/h2-console/**").permitAll()
+                        // 관리자 권한이 필요한 경로 설정
+                        .requestMatchers("/api/admin/**").hasRole("ADMIN")
+                        // 그 외 모든 요청은 인증 필요
+                        .anyRequest().authenticated()
                 )
-                .formLogin(form -> form
-                        .loginPage("/login")        // 커스텀 로그인 페이지 경로
-                        .defaultSuccessUrl("/")     // 로그인 성공 시 리다이렉트 경로
-                        .permitAll()                // 로그인 페이지는 모든 사용자에게 허용
+
+                // 세션 관리 설정
+                .sessionManagement(session -> session
+                        // JWT를 사용하므로 세션을 생성하지 않음
+                        .sessionCreationPolicy(SessionCreationPolicy.STATELESS)
                 )
-                .logout(logout -> logout
-                        .logoutSuccessUrl("/")      // 로그아웃 성공 시 리다이렉트 경로
-                        .permitAll()                // 로그아웃은 모든 사용자에게 허용
-                )
-                .csrf(csrf -> csrf.disable());  // CSRF 비활성화
+                // 폼 로그인 비활성화 추가
+                .formLogin(formLogin -> formLogin.disable())
+                // HTTP Basic 인증도 비활성화
+                .httpBasic(httpBasic -> httpBasic.disable())
+                // JWT 필터를 UsernamePasswordAuthenticationFilter 전에 추가
+                .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
+
+                // H2 콘솔 사용을 위한 설정
+                .headers(headers -> headers
+                        .frameOptions(frameOptions -> frameOptions
+                                .sameOrigin()  // 같은 출처의 프레임은 허용
+                        )
+                );
+
         return http.build();
     }
 
-
+    // AuthenticationManager Bean 등록
     @Bean
-    public PasswordEncoder passwordEncoder() {
-        return new BCryptPasswordEncoder();
+    public AuthenticationManager authenticationManager(AuthenticationConfiguration config) throws Exception {
+        return config.getAuthenticationManager();
     }
 
+    // 비밀번호 인코더 Bean 등록
     @Bean
-    public UserDetailsService userDetailsService(PasswordEncoder passwordEncoder) {  // 파라미터로 주입받음
-        // 일반 사용자
-        UserDetails user = User.builder()
-                .username("user")
-                .password(passwordEncoder.encode("1234"))
-                .roles("USER")
-                .build();
-
-        // 관리자
-        UserDetails admin = User.builder()
-                .username("admin")
-                .password(passwordEncoder.encode("1234"))
-                .roles("ADMIN", "USER")
-                .build();
-
-        return new InMemoryUserDetailsManager(user, admin);
+    public PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder();  // BCrypt 알고리즘 사용
     }
 }
